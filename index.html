@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manuals</title>
+<style>
+  :root{
+    --bg:#121212;
+    --bg-raised:#1a1a1a;
+    --ink:#ededed;
+    --ink-dim:#c9c9c9;
+    --accent:#f0a860;
+    --line:#2a2a2a;
+    --outline: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 6px rgba(0,0,0,0.9);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    overflow:hidden;
+  }
+  #app{ display:flex; flex-direction:column; height:100%; }
+
+  /* ---- Stage (the image itself; this is what goes fullscreen) ---- */
+  #stage{
+    flex:1 1 auto; position:relative; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    background:
+      linear-gradient(45deg, #181818 25%, transparent 25%) -10px 0/20px 20px,
+      linear-gradient(-45deg, #181818 25%, transparent 25%) -10px 0/20px 20px,
+      #101010;
+    cursor:grab;
+  }
+  #stage.zoomed{ cursor:grab; }
+  #stage.panning{ cursor:grabbing; }
+  #stage:fullscreen{ background-color:#000; }
+  #stage:-webkit-full-screen{ background-color:#000; }
+  canvas#view{ display:block; max-width:100%; max-height:100%; pointer-events:none; }
+  #loadingMsg{
+    position:absolute; color:var(--ink-dim); font-size:14px; letter-spacing:0.5px;
+    text-shadow: var(--outline);
+  }
+
+  /* ---- Picker: shown when no manual is specified in the URL hash ---- */
+  #picker{
+    position:fixed; inset:0; z-index:50; background:var(--bg);
+    display:none; flex-direction:column; align-items:center; justify-content:center;
+    padding:32px; gap:20px; text-align:center;
+  }
+  #picker h1{
+    font-size:19px; font-weight:600; color:var(--ink); margin:0; letter-spacing:.3px;
+  }
+  .pickerMsg{ color:var(--ink-dim); font-size:14px; margin:0; }
+  #pickerList{
+    display:flex; flex-wrap:wrap; gap:10px; justify-content:center; max-width:680px;
+  }
+  .pickerItem{
+    background:var(--bg-raised); border:1px solid var(--line); color:var(--ink);
+    padding:10px 18px; border-radius:8px; font-size:14px; cursor:pointer;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    transition:border-color .15s, color .15s;
+  }
+  .pickerItem:hover{ border-color:var(--accent); color:var(--accent); }
+
+  /* ---- Click zones: left/right halves of the image navigate prev/next.
+         Fully invisible on purpose — no icon, no highlight. Cursor alone
+         signals whether that direction is available. ---- */
+  .clickZone{
+    position:absolute; top:0; bottom:0; width:50%; z-index:5;
+  }
+  .clickZone.left{ left:0; cursor:pointer; }
+  .clickZone.right{ right:0; cursor:pointer; }
+  .clickZone.disabled{ cursor:default; }
+
+  /* ---- Overlay controls (page counter, fullscreen button, zoom tag) ---- */
+  /* Always visible once shown; only fades after a period of inactivity,
+     and never hides just because the cursor left the stage. */
+  .stageOverlay{
+    position:absolute; z-index:8; opacity:0; transition:opacity .25s;
+    pointer-events:none;
+  }
+  #stage.show-ui .stageOverlay{ opacity:1; pointer-events:auto; }
+
+  #pageBox{
+    top:14px; left:16px;
+    display:flex; align-items:baseline; gap:4px;
+    font-family:'SF Mono',Menlo,Consolas,monospace; font-size:14px; color:var(--accent);
+  }
+  #pageBox .total{ color:var(--ink-dim); font-size:12px; text-shadow:var(--outline); }
+  #cur{
+    width:3.6ch; background:transparent; border:none; border-bottom:1px dashed transparent;
+    color:var(--accent); font-family:'SF Mono',Menlo,Consolas,monospace; font-size:14px;
+    letter-spacing:1px; padding:0; text-align:right; -moz-appearance:textfield;
+    text-shadow:var(--outline);
+  }
+  #cur:hover, #cur:focus{ border-bottom-color:var(--accent); }
+  #cur:focus{ outline:none; }
+  #cur::-webkit-outer-spin-button, #cur::-webkit-inner-spin-button{
+    -webkit-appearance:none; margin:0;
+  }
+
+  #fsBtn{
+    top:14px; right:16px; width:34px; height:34px;
+    color:var(--ink); font-size:17px; text-shadow:var(--outline);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    -webkit-tap-highlight-color:transparent; user-select:none;
+  }
+  #fsBtn:hover{ color:var(--accent); }
+
+  #zoomTag{
+    bottom:14px; right:16px;
+    font-family:'SF Mono',Menlo,Consolas,monospace; font-size:12px;
+    color:var(--ink-dim); text-shadow:var(--outline);
+  }
+
+  /* ---- Swipe feedback arrows (mobile) ---- */
+  .swipeFlash{
+    position:absolute; top:50%; transform:translateY(-50%); z-index:7;
+    font-size:28px; color:var(--accent); opacity:0; pointer-events:none;
+    text-shadow:var(--outline);
+    transition:opacity .25s;
+  }
+  #swipeLeft{ left:16px; }
+  #swipeRight{ right:16px; }
+
+  /* ---- Slider ---- */
+  #sliderRow{ padding:6px 18px 2px; flex:0 0 auto; }
+  #slider{ width:100%; accent-color:var(--accent); }
+
+  /* ---- Filmstrip ---- */
+  #filmstrip{
+    flex:0 0 auto; display:flex; gap:6px; padding:10px 14px;
+    overflow-x:auto; background:var(--bg-raised); border-top:1px solid var(--line);
+  }
+  .thumb{
+    flex:0 0 auto; width:64px; height:64px; border-radius:4px; overflow:hidden;
+    border:2px solid transparent; cursor:pointer; background:#000; position:relative;
+  }
+  .thumb.active{ border-color:var(--accent); }
+  .thumb canvas{ width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb .idx{
+    position:absolute; bottom:2px; left:3px; font-size:9px; font-family:monospace;
+    color:#fff; text-shadow:0 0 3px #000;
+  }
+
+  /* ---- Mobile ---- */
+  @media (max-width: 640px){
+    #pageBox{ font-size:12px; }
+    #cur{ font-size:12px; width:3.2ch; }
+    #fsBtn{ width:30px; height:30px; font-size:15px; }
+    #sliderRow{ padding:4px 10px 2px; }
+    #filmstrip{ padding:8px 10px; gap:5px; }
+    .thumb{ width:52px; height:52px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="picker">
+    <h1>Choisis un manuel</h1>
+    <div id="pickerList"><p class="pickerMsg">Chargement de la liste…</p></div>
+  </div>
+
+  <div id="stage">
+    <div id="loadingMsg">Chargement de la vidéo…</div>
+    <canvas id="view"></canvas>
+
+    <div class="clickZone left" id="clickLeft"></div>
+    <div class="clickZone right" id="clickRight"></div>
+
+    <div class="stageOverlay" id="pageBox">
+      <input id="cur" type="number" min="1" inputmode="numeric" value="1">
+      <span class="total">/ <span id="total">--</span></span>
+    </div>
+    <div class="stageOverlay" id="fsBtn" title="Plein écran">⛶</div>
+    <div class="stageOverlay" id="zoomTag">100%</div>
+
+    <div class="swipeFlash" id="swipeLeft">&larr;</div>
+    <div class="swipeFlash" id="swipeRight">&rarr;</div>
+  </div>
+
+  <div id="sliderRow">
+    <input type="range" id="slider" min="1" value="1" max="1">
+  </div>
+
+  <div id="filmstrip"></div>
+
+  <video id="src" preload="auto" muted playsinline style="display:none"></video>
+</div>
+
+<script>
+/* ============ CONFIGURATION ============ */
+// Doit correspondre exactement aux paramètres utilisés lors de l'encodage ffmpeg.
+const manual = decodeURIComponent(window.location.hash.substring(1));
+const VIDEO_SRC = `https://github.com/End0832/manuals/releases/download/Manual/${manual}.mp4`;   // chemin vers la vidéo, construit depuis le hash de l'URL (#nom-du-manuel)
+const FPS = 1;                    // -framerate utilisé à l'encodage
+/* ======================================== */
+
+const video   = document.getElementById('src');
+const canvas  = document.getElementById('view');
+const ctx     = canvas.getContext('2d');
+const stage   = document.getElementById('stage');
+const slider  = document.getElementById('slider');
+const curEl   = document.getElementById('cur');
+const totalEl = document.getElementById('total');
+const filmstrip = document.getElementById('filmstrip');
+const loadingMsg = document.getElementById('loadingMsg');
+const zoomTag = document.getElementById('zoomTag');
+const clickLeft = document.getElementById('clickLeft');
+const clickRight = document.getElementById('clickRight');
+const picker = document.getElementById('picker');
+const pickerList = document.getElementById('pickerList');
+
+let totalFrames = 1;
+let currentFrame = 1;
+let zoom = 1, panX = 0, panY = 0;
+let isPanning = false, lastX = 0, lastY = 0, dragMoved = false;
+let seeking = false, pendingFrame = null;
+
+function frameToTime(f){ return (f - 1) / FPS + (0.5 / FPS); }
+
+/* ---- Page de sélection : affichée si aucun manuel n'est précisé dans l'URL (#...) ----
+   La liste vient d'un fichier JSON statique (manuals.json, à côté de ce HTML),
+   pas de l'API GitHub — pas d'appel réseau superflu, pas de limite de taux. */
+async function loadManualList(){
+  try {
+    const res = await fetch('manuals.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const names = await res.json();
+    if (!Array.isArray(names) || names.length === 0){
+      pickerList.innerHTML = '<p class="pickerMsg">Aucun manuel disponible pour le moment.</p>';
+      return;
+    }
+    const sorted = [...names].sort((a, b) => String(a).localeCompare(String(b), 'fr'));
+    pickerList.innerHTML = '';
+    sorted.forEach(name => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pickerItem';
+      btn.textContent = name;
+      btn.onclick = () => {
+        location.href = location.pathname + location.search + '#' + encodeURIComponent(name);
+        location.reload();
+      };
+      pickerList.appendChild(btn);
+    });
+  } catch (err){
+    pickerList.innerHTML = '<p class="pickerMsg">Impossible de charger "manuals.json". Vérifie qu\'il est bien placé à côté de la page html.</p>';
+  }
+}
+
+if (!manual){
+  document.title = 'Choisir un manuel';
+  picker.style.display = 'flex';
+  loadManualList();
+} else {
+  document.title = manual;
+  video.addEventListener('loadedmetadata', () => {
+    totalFrames = Math.max(1, Math.round(video.duration * FPS));
+    slider.max = totalFrames;
+    totalEl.textContent = totalFrames;
+    loadingMsg.style.display = 'none';
+    buildFilmstripPlaceholders();
+    goTo(1);
+    showUI();
+  });
+  video.addEventListener('error', () => {
+    loadingMsg.textContent = "Impossible de charger \"" + VIDEO_SRC + "\". Vérifie le nom du manuel et le chemin.";
+  });
+  video.src = VIDEO_SRC;
+}
+
+function drawCurrentFrame(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return;
+  canvas.width = vw; canvas.height = vh;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,vw,vh);
+  ctx.setTransform(zoom,0,0,zoom, panX, panY);
+  ctx.drawImage(video, 0, 0, vw, vh);
+}
+
+/* ---- Stepped page navigation: 1, 2, 4, 6, 8, ... , dernière page ---- */
+function nextPage(current, total){
+  if (current >= total) return null;
+  if (current === 1) return Math.min(2, total);
+  const n = current + 2;
+  return n >= total ? total : n;
+}
+function prevPage(current, total){
+  if (current <= 1) return null;
+  if (current === total && total % 2 !== 0) return total - 1;
+  const p = current - 2;
+  return p <= 1 ? 1 : p;
+}
+
+function updateClickZones(){
+  const p = prevPage(currentFrame, totalFrames);
+  const n = nextPage(currentFrame, totalFrames);
+  clickLeft.classList.toggle('disabled', p === null);
+  clickRight.classList.toggle('disabled', n === null);
+}
+
+function goTo(frame){
+  frame = Math.min(totalFrames, Math.max(1, frame));
+  currentFrame = frame;
+  if (document.activeElement !== curEl) curEl.value = frame;
+  slider.value = frame;
+  updateClickZones();
+
+  if (seeking){ pendingFrame = frame; return; }
+  seeking = true;
+  const t = frameToTime(frame);
+  const onSeeked = () => {
+    video.removeEventListener('seeked', onSeeked);
+    seeking = false;
+    resetView(false);
+    drawCurrentFrame();
+    highlightThumb(frame);
+    if (pendingFrame !== null){
+      const nf = pendingFrame; pendingFrame = null; goTo(nf);
+    }
+  };
+  video.addEventListener('seeked', onSeeked);
+  video.currentTime = t;
+}
+
+function resetView(redraw=true){
+  zoom = 1; panX = 0; panY = 0;
+  zoomTag.textContent = '100%';
+  if (redraw) drawCurrentFrame();
+}
+
+/* ---- Overlay: fixed in normal view; auto-hides after inactivity
+       only while in fullscreen (so the fullscreen image stays clean). ---- */
+let uiTimer = null;
+function showUI(){
+  stage.classList.add('show-ui');
+  clearTimeout(uiTimer);
+  if (isFullscreen()){
+    uiTimer = setTimeout(() => stage.classList.remove('show-ui'), 2200);
+  }
+}
+stage.addEventListener('mousemove', showUI);
+showUI();
+
+/* ---- Click zones: click left/right half of the image to navigate ---- */
+clickLeft.addEventListener('click', () => {
+  const p = prevPage(currentFrame, totalFrames);
+  if (p !== null) goTo(p);
+});
+clickRight.addEventListener('click', () => {
+  const n = nextPage(currentFrame, totalFrames);
+  if (n !== null) goTo(n);
+});
+
+/* ---- Page number field ---- */
+let curDebounce = null;
+curEl.addEventListener('input', () => {
+  const raw = curEl.value;
+  clearTimeout(curDebounce);
+  if (raw === '') return;
+  const v = parseInt(raw, 10);
+  if (isNaN(v)) return;
+  curDebounce = setTimeout(() => goTo(v), 180);
+});
+curEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') curEl.blur();
+});
+curEl.addEventListener('blur', () => { curEl.value = currentFrame; });
+curEl.addEventListener('focus', () => curEl.select());
+curEl.addEventListener('click', e => e.stopPropagation());
+
+slider.addEventListener('input', () => goTo(parseInt(slider.value,10)));
+window.addEventListener('keydown', e => {
+  if (document.activeElement === curEl) return;
+  if (e.key === 'ArrowRight'){ const n = nextPage(currentFrame, totalFrames); if (n !== null) goTo(n); }
+  if (e.key === 'ArrowLeft'){ const p = prevPage(currentFrame, totalFrames); if (p !== null) goTo(p); }
+});
+
+/* ---- Zoom / pan ---- */
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+  const factor = e.deltaY < 0 ? 1.15 : 1/1.15;
+  const newZoom = Math.min(12, Math.max(1, zoom * factor));
+  if (newZoom <= 1){
+    zoom = 1; panX = 0; panY = 0;
+  } else {
+    panX = mx - (mx - panX) * (newZoom / zoom);
+    panY = my - (my - panY) * (newZoom / zoom);
+    zoom = newZoom;
+  }
+  zoomTag.textContent = Math.round(zoom*100) + '%';
+  stage.classList.toggle('zoomed', zoom > 1);
+  drawCurrentFrame();
+  showUI();
+}, { passive:false });
+
+stage.addEventListener('mousedown', e => {
+  if (zoom <= 1) return;
+  isPanning = true; dragMoved = false; lastX = e.clientX; lastY = e.clientY;
+  stage.classList.add('panning');
+});
+window.addEventListener('mousemove', e => {
+  if (!isPanning) return;
+  dragMoved = true;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+  panX += (e.clientX - lastX) * scaleX;
+  panY += (e.clientY - lastY) * scaleY;
+  lastX = e.clientX; lastY = e.clientY;
+  drawCurrentFrame();
+});
+window.addEventListener('mouseup', () => { isPanning = false; stage.classList.remove('panning'); });
+stage.addEventListener('dblclick', () => resetView());
+
+/* ---- Fullscreen: locks the IMAGE itself, not the whole page ---- */
+const fsBtn = document.getElementById('fsBtn');
+function isFullscreen(){
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+function toggleFullscreen(){
+  if (!isFullscreen()){
+    const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+    if (req) req.call(stage);
+  } else {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+  }
+}
+fsBtn.addEventListener('click', e => { e.stopPropagation(); toggleFullscreen(); });
+document.addEventListener('fullscreenchange', () => {
+  fsBtn.textContent = isFullscreen() ? '⤢' : '⛶';
+  fsBtn.title = isFullscreen() ? 'Quitter le plein écran' : 'Plein écran';
+  showUI();
+});
+document.addEventListener('webkitfullscreenchange', () => {
+  fsBtn.textContent = isFullscreen() ? '⤢' : '⛶';
+  showUI();
+});
+window.addEventListener('keydown', e => {
+  if (document.activeElement === curEl) return;
+  if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+});
+
+/* ---- Touch: swipe to navigate, pinch/drag to zoom & pan ---- */
+const swipeLeftEl = document.getElementById('swipeLeft');
+const swipeRightEl = document.getElementById('swipeRight');
+function flash(el){
+  el.style.opacity = 1;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.style.opacity = 0, 220);
+}
+
+let touchMode = null; // 'pan' | 'pinch' | 'swipe'
+let touchStartX = 0, touchStartY = 0;
+let lastTouchX = 0, lastTouchY = 0;
+let pinchStartDist = 0, pinchStartZoom = 1;
+let pinchMidX = 0, pinchMidY = 0;
+
+function touchDist(t0, t1){
+  return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+}
+function canvasPoint(clientX, clientY){
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) * (canvas.width / rect.width),
+    y: (clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+stage.addEventListener('touchstart', e => {
+  showUI();
+  if (e.touches.length === 1){
+    const t = e.touches[0];
+    touchStartX = t.clientX; touchStartY = t.clientY;
+    lastTouchX = t.clientX; lastTouchY = t.clientY;
+    touchMode = zoom > 1 ? 'pan' : 'swipe';
+  } else if (e.touches.length === 2){
+    touchMode = 'pinch';
+    pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+    pinchStartZoom = zoom;
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const p = canvasPoint(mx, my);
+    pinchMidX = p.x; pinchMidY = p.y;
+  }
+}, { passive:true });
+
+stage.addEventListener('touchmove', e => {
+  if (touchMode === 'pan' && e.touches.length === 1){
+    e.preventDefault();
+    const t = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+    panX += (t.clientX - lastTouchX) * scaleX;
+    panY += (t.clientY - lastTouchY) * scaleY;
+    lastTouchX = t.clientX; lastTouchY = t.clientY;
+    drawCurrentFrame();
+  } else if (touchMode === 'pinch' && e.touches.length === 2){
+    e.preventDefault();
+    const dist = touchDist(e.touches[0], e.touches[1]);
+    const newZoom = Math.min(12, Math.max(1, pinchStartZoom * (dist / pinchStartDist)));
+    if (newZoom <= 1){
+      zoom = 1; panX = 0; panY = 0;
+    } else {
+      panX = pinchMidX - (pinchMidX - panX) * (newZoom / zoom);
+      panY = pinchMidY - (pinchMidY - panY) * (newZoom / zoom);
+      zoom = newZoom;
+    }
+    zoomTag.textContent = Math.round(zoom*100) + '%';
+    stage.classList.toggle('zoomed', zoom > 1);
+    drawCurrentFrame();
+  }
+}, { passive:false });
+
+stage.addEventListener('touchend', e => {
+  if (touchMode === 'swipe' && e.changedTouches.length === 1){
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStartX;
+    const dy = t.clientY - touchStartY;
+    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5){
+      if (dx < 0){ const n = nextPage(currentFrame, totalFrames); if (n !== null){ flash(swipeRightEl); goTo(n); } }
+      else { const p = prevPage(currentFrame, totalFrames); if (p !== null){ flash(swipeLeftEl); goTo(p); } }
+    }
+  }
+  if (e.touches.length === 0) touchMode = null;
+}, { passive:true });
+
+/* ---- Filmstrip (lazy thumbnails) ---- */
+/* Shows the same stepped sequence as the click-zone navigation:
+   1, 2, 4, 6, 8, ... , dernière page */
+function buildPageSequence(total){
+  const seq = [1];
+  if (total <= 1) return seq;
+  let p = 2;
+  while (p < total){ seq.push(p); p += 2; }
+  seq.push(total);
+  return seq;
+}
+
+let thumbNodes = [];
+function buildFilmstripPlaceholders(){
+  filmstrip.innerHTML = '';
+  thumbNodes = [];
+  const seq = buildPageSequence(totalFrames);
+  seq.forEach(i => {
+    const div = document.createElement('div');
+    div.className = 'thumb';
+    div.dataset.frame = i;
+    div.innerHTML = '<span class="idx">' + i + '</span>';
+    div.onclick = () => goTo(i);
+    filmstrip.appendChild(div);
+    thumbNodes.push(div);
+  });
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting){
+        const el = entry.target;
+        if (!el.dataset.loaded) generateThumb(el);
+      }
+    });
+  }, { root: filmstrip, rootMargin: '200px' });
+  thumbNodes.forEach(el => io.observe(el));
+}
+
+let thumbQueue = [];
+let thumbBusy = false;
+function generateThumb(el){
+  el.dataset.loaded = '1';
+  thumbQueue.push(el);
+  processThumbQueue();
+}
+function processThumbQueue(){
+  if (thumbBusy || thumbQueue.length === 0) return;
+  thumbBusy = true;
+  const el = thumbQueue.shift();
+  const frame = parseInt(el.dataset.frame, 10);
+  const t = frameToTime(frame);
+
+  const savedTime = video.currentTime;
+  const done = () => {
+    video.removeEventListener('seeked', done);
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const cx = c.getContext('2d');
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const scale = Math.max(64/vw, 64/vh);
+    const dw = vw*scale, dh = vh*scale;
+    cx.drawImage(video, (64-dw)/2, (64-dh)/2, dw, dh);
+    el.prepend(c);
+    thumbBusy = false;
+    // restore main view time if user hasn't navigated meanwhile
+    if (!seeking) video.currentTime = frameToTime(currentFrame);
+    processThumbQueue();
+  };
+  video.addEventListener('seeked', done);
+  video.currentTime = t;
+}
+function highlightThumb(frame){
+  let matched = null;
+  thumbNodes.forEach(el => {
+    const isMatch = parseInt(el.dataset.frame, 10) === frame;
+    el.classList.toggle('active', isMatch);
+    if (isMatch) matched = el;
+  });
+  if (matched) matched.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
+}
+</script>
+</body>
+</html>
